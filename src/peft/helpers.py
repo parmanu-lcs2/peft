@@ -263,7 +263,7 @@ class MonteCLoRATrainerMixin:
         from transformers import Trainer
         from peft import get_peft_model, LoraConfig
         from peft.helpers import MonteCLoRATrainerMixin
-        from peft.tuners.monteclora_new import MonteCLoraConfig
+        from peft.tuners.monteclora import MonteCLoraConfig
 
 
         # custom trainer that supports MonteCLoRA
