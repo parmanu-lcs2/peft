@@ -945,11 +945,14 @@ class MontecloraLinearVariant(LoraVariant):
         Args:
             module: The Linear LoRA layer to add Monteclora to
             adapter_name: Name of the adapter
-            **kwargs: Must contain 'monteclora_config' with Monteclora configuration
+            **kwargs: Must contain 'config' (the `LoraConfig`) which carries the `monteclora_config`.
         """
-        monteclora_config = kwargs.get("monteclora_config")
+        config = kwargs.get("config")
+        monteclora_config = getattr(config, "monteclora_config", None) if config is not None else None
         if monteclora_config is None:
-            raise ValueError("MontecloraLinearVariant.init() requires 'monteclora_config' in kwargs")
+            raise ValueError(
+                "MontecloraLinearVariant.init() requires `config.monteclora_config` to be set on the LoraConfig."
+            )
         if isinstance(monteclora_config, dict):
             monteclora_config = MontecloraConfig(**monteclora_config)
 
@@ -974,14 +977,13 @@ class MontecloraLinearVariant(LoraVariant):
         return MontecloraSampler(
             in_features=module.in_features,
             out_features=lora_A.out_features,
-            monteclora_n=monteclora_config.monteclora_n,
+            num_samples=monteclora_config.num_samples,
             use_entropy=monteclora_config.use_entropy,
             dirichlet_prior=monteclora_config.dirichlet_prior,
             sample_scaler=monteclora_config.sample_scaler,
             kl_loss_weight=monteclora_config.kl_loss_weight,
             buffer_size=monteclora_config.buffer_size,
             device=lora_A.weight.device,
-            dtype=lora_A.weight.dtype,
         )
 
     @staticmethod
@@ -1073,6 +1075,9 @@ class MontecloraLinearVariant(LoraVariant):
         dropout = module.lora_dropout[active_adapter]
         scaling = module.scaling[active_adapter]
         if active_adapter not in module.lora_monteclora_sampler:
+            # Sampler creation was deferred in `init` because the LoRA weights were on the meta device
+            # (e.g. when `low_cpu_mem_usage=True`). Now that we have a real tensor at forward time, we can
+            # finally create the sampler on the correct device.
             monteclora_config = module._lora_monteclora_config[active_adapter]
             module.lora_monteclora_sampler[active_adapter] = MontecloraLinearVariant._create_sampler(
                 module, active_adapter, monteclora_config

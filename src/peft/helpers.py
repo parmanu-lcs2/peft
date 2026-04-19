@@ -21,8 +21,7 @@ from types import MethodType
 from torch import nn
 
 from .peft_model import PeftConfig, PeftModel
-from .tuners.lora import LoraLayer, dora
-from .tuners.lora.monteclora import MontecloraSampler
+from .tuners.lora import LoraLayer, LoraModel, dora
 from .tuners.tuners_utils import BaseTunerLayer
 
 
@@ -273,7 +272,7 @@ class MontecloraTrainerMixin:
 
         # Configure LoRA with Monteclora
         monteclora_config = MontecloraConfig(
-            monteclora_n=8,
+            num_samples=8,
             sample_scaler=1e-4,
             kl_loss_weight=1e-5,
         )
@@ -281,7 +280,6 @@ class MontecloraTrainerMixin:
             r=16,
             lora_alpha=32,
             target_modules=["q_proj", "v_proj"],
-            use_monteclora=True,
             monteclora_config=monteclora_config,
         )
 
@@ -308,32 +306,28 @@ class MontecloraTrainerMixin:
         Returns:
             loss or (loss, outputs) depending on return_outputs
         """
-        # 1. Compute the standard task loss
         if return_outputs:
             task_loss, outputs = super().compute_loss(model, inputs, return_outputs=True, **kwargs)
         else:
             task_loss = super().compute_loss(model, inputs, return_outputs=False, **kwargs)
             outputs = None
 
-        # 2. Calculate Variational Loss (KLD + Entropy) from Monteclora samplers
-        var_loss_sum = 0.0
-        num_monte_layers = 0
+        # `_get_monteclora_loss` already normalizes by the number of samplers within a single LoraModel.
+        # In the typical case there is exactly one LoraModel (PeftModel.base_model) so this loop runs once
+        # and matches the original behavior. For unusual setups with multiple tuners we additionally average
+        # across the LoraModels so the regularization magnitude does not scale with the number of tuners.
+        # `_get_monteclora_loss` returns 0.0 when no MonteCLoRA samplers are present, so this is a no-op
+        # for plain LoRA training.
+        monteclora_loss = 0.0
+        num_lora_models = 0
+        for module in model.modules():
+            if isinstance(module, LoraModel):
+                monteclora_loss = monteclora_loss + module._get_monteclora_loss()
+                num_lora_models += 1
+        if num_lora_models > 1:
+            monteclora_loss = monteclora_loss / num_lora_models
 
-        # Iterate through modules to find Monteclora samplers
-        for name, module in model.named_modules():
-            # Check if this is a MontecloraSampler by checking for the get_variational_loss method
-            if isinstance(module, MontecloraSampler):
-                kl_loss, entropy_loss = module.get_variational_loss()
-                var_loss_sum += kl_loss + entropy_loss
-                num_monte_layers += 1
-
-        # 3. Normalize the Variational Loss
-        normalised_loss = 0.0
-        if num_monte_layers > 0:
-            normalised_loss = var_loss_sum / num_monte_layers
-
-        # 4. Combine losses
-        total_loss = task_loss + normalised_loss
+        total_loss = task_loss + monteclora_loss
 
         return (total_loss, outputs) if return_outputs else total_loss
 

@@ -89,7 +89,7 @@ def train_model(
 
     # --- PEFT Configuration (MonteCLoRA) ---
     # Note: Using n_samples to control Monte Carlo iterations
-    monte_clora_config = MontecloraConfig(monteclora_n=n_samples)
+    monte_clora_config = MontecloraConfig(num_samples=n_samples)
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
         inference_mode=False,

@@ -875,6 +875,40 @@ class LoraModel(BaseTuner):
 
         return tensors_lora
 
+    def _get_monteclora_loss(self) -> torch.Tensor | float:
+        """
+        Compute the MonteCLoRA variational regularization loss.
+
+        Iterates over all `MontecloraSampler` modules in the model, sums their KL-divergence and entropy
+        components, and normalizes by the number of MonteCLoRA layers. Returns ``0.0`` if MonteCLoRA is not used
+        anywhere in the model.
+
+        Typical usage during training (after computing the task loss):
+
+        ```py
+        task_loss = ...  # standard loss from the model
+        monteclora_loss = model._get_monteclora_loss()
+        total_loss = task_loss + monteclora_loss
+        ```
+
+        Returns:
+            The normalized variational loss as a tensor (or ``0.0`` if no MonteCLoRA samplers are present).
+        """
+        # Local import to avoid a top-level import cycle between model.py and monteclora.py.
+        from .monteclora import MontecloraSampler
+
+        var_loss_sum: torch.Tensor | float = 0.0
+        num_monte_layers = 0
+        for module in self.modules():
+            if isinstance(module, MontecloraSampler):
+                kl_loss, entropy_loss = module.get_variational_loss()
+                var_loss_sum = var_loss_sum + kl_loss + entropy_loss
+                num_monte_layers += 1
+
+        if num_monte_layers == 0:
+            return 0.0
+        return var_loss_sum / num_monte_layers
+
     def _add_modules_to_save_to_tie(self, peft_config: LoraConfig, tied_weight_keys: list[str]):
         """
         Add embedding layer to `modules_to_save` and remove rest of the tied layers from `module_to_save`. Maintain a

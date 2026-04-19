@@ -178,7 +178,7 @@ TEST_CASES = [
         LoraConfig,
         {
             "target_modules": ["lin0"],
-            "monteclora_config": MontecloraConfig(monteclora_n=2),
+            "monteclora_config": MontecloraConfig(num_samples=2),
         },
     ),
     (
@@ -187,7 +187,7 @@ TEST_CASES = [
         LoraConfig,
         {
             "target_modules": ["lin0", "lin1"],
-            "monteclora_config": MontecloraConfig(monteclora_n=2),
+            "monteclora_config": MontecloraConfig(num_samples=2),
         },
     ),
     (
@@ -197,7 +197,7 @@ TEST_CASES = [
         {
             "target_modules": "lin1",
             "lora_alpha": 32,
-            "monteclora_config": MontecloraConfig(monteclora_n=2),
+            "monteclora_config": MontecloraConfig(num_samples=2),
         },
     ),
     #######
@@ -2276,16 +2276,11 @@ class TestPeftCustomModel(PeftCommonTester):
             y_pred = model(**X)
             loss = y_pred.sum()
             if is_monteclora:
-                # add variational loss
-                for name, module in model.named_modules():
-                    if isinstance(module, MontecloraSampler):
-                        kl_loss, entropy_loss = module.get_variational_loss()
-                        loss += kl_loss + entropy_loss
+                loss = loss + model._get_monteclora_loss()
             loss.backward()
             optimizer.step()
 
         tol = 1e-4
-        ## higher tol for monteclora to account for randomness from sampling
         params_before = dict(model_before.named_parameters())
         params_after = dict(model.named_parameters())
         assert params_before.keys() == params_after.keys()
@@ -2293,7 +2288,8 @@ class TestPeftCustomModel(PeftCommonTester):
         for name, param_before in params_before.items():
             param_after = params_after[name]
             if "monteclora" in name.lower():
-                ## skipping monteclora parameters
+                # MonteCLoRA's variational parameters are stochastic by construction (they get optimized
+                # via Monte Carlo sampling), so we don't include them in the strict allclose check below.
                 continue
             if (model.prefix in name) or ("modules_to_save" in name) or ("token_adapter.trainable_tokens" in name):
                 # target_modules, modules_to_save and modules of `NewTokensWrapper` _are_ updated
@@ -2326,7 +2322,6 @@ class TestPeftCustomModel(PeftCommonTester):
             config_cls, PveraConfig
         ):  # needs a very small lr to not get nan in pvera_lambda_b due to high input values in this test (up to 90)
             lr = 1e-6
-
         elif is_monteclora:
             lr = 1e-3
         optimizer = torch.optim.SGD(model.parameters(), lr=lr)
@@ -2338,12 +2333,7 @@ class TestPeftCustomModel(PeftCommonTester):
             y_pred = model(**X)
             loss = y_pred.sum()
             if is_monteclora:
-                # add variational loss
-                for name, module in model.named_modules():
-                    # Check if this is a MontecloraSampler by checking for the get_variational_loss method
-                    if isinstance(module, MontecloraSampler):
-                        kl_loss, entropy_loss = module.get_variational_loss()
-                        loss += kl_loss + entropy_loss
+                loss = loss + model._get_monteclora_loss()
             loss.backward()
             optimizer.step()
 
@@ -3720,7 +3710,7 @@ class TestPeftCustomModel(PeftCommonTester):
             r=8,
             lora_alpha=16,
             target_modules=["lin0", "lin1"],
-            monteclora_config=MontecloraConfig(monteclora_n=4),
+            monteclora_config=MontecloraConfig(num_samples=4),
         )
         model = get_peft_model(MLP(), config)
         model.train()
@@ -3728,13 +3718,8 @@ class TestPeftCustomModel(PeftCommonTester):
         input_data = torch.randn(2, 10)
         _ = model(input_data)
 
-        variational_loss = 0.0
-        sampler_count = 0
-        for module in model.modules():
-            if hasattr(module, "get_variational_loss") and module.__class__.__name__ == "MontecloraSampler":
-                kl_loss, entropy_loss = module.get_variational_loss()
-                variational_loss += kl_loss + entropy_loss
-                sampler_count += 1
+        sampler_count = sum(1 for module in model.modules() if isinstance(module, MontecloraSampler))
+        variational_loss = model._get_monteclora_loss()
 
         assert sampler_count > 0, "No Monteclora samplers found for variational loss computation"
         assert variational_loss > 0, "Variational loss should be positive"

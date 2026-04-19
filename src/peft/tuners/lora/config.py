@@ -703,8 +703,9 @@ class LoraConfig(PeftConfig):
         default=None,
         metadata={
             "help": (
-                "The configuration of Monteclora. If passed then "
-                "Monteclora will be used to add variational sampling to the LoRA adapters."
+                "The configuration of Monteclora (Monte Carlo Low-Rank Adaptation). If passed, Monteclora will be "
+                "used to add variational Monte Carlo sampling on top of the LoRA adapters. See `MontecloraConfig` "
+                "for details on the individual hyperparameters."
             )
         },
     )
@@ -956,14 +957,10 @@ class MontecloraConfig:
     regularization strength, and compute cost.
 
     Args:
-        monteclora_n (`int`):
+        num_samples (`int`):
             Number of Monte Carlo samples to draw per forward pass. Higher values usually give smoother training and
             better uncertainty estimates but increase compute and memory usage. Lower this if training is too slow or
             memory constrained; increase it if training is stable and you want stronger Monte Carlo averaging.
-        monteclora_m (`Optional[int]`):
-            Additional sampler size parameter (e.g. number of internal mixture components). In most cases, leaving this
-            as `None` lets Monteclora choose a reasonable default. Advanced users can reduce it to save memory or
-            increase it to allow a richer variational approximation.
         use_entropy (`bool`):
             Whether to add an entropy regularization term that keeps the Monte Carlo weights from collapsing to a
             single sample. Turn this on if you observe the sampler becoming very peaky or want stronger regularization;
@@ -989,17 +986,26 @@ class MontecloraConfig:
             you are memory constrained.
     """
 
-    monteclora_n: int = field(
+    num_samples: int = field(
         default=8,
-        metadata={"help": "Number of Monte Carlo samples to use."},
-    )
-    monteclora_m: Optional[int] = field(
-        default=None,
-        metadata={"help": "Additional parameter for the sampler."},
+        metadata={
+            "help": (
+                "Number of Monte Carlo samples to draw per forward pass. Higher values usually give smoother "
+                "training and better uncertainty estimates but increase compute and memory usage. Lower this if "
+                "training is too slow or memory constrained; increase it if training is stable and you want "
+                "stronger Monte Carlo averaging."
+            )
+        },
     )
     use_entropy: bool = field(
         default=False,
-        metadata={"help": "Whether to use entropy regularization in the variational loss."},
+        metadata={
+            "help": (
+                "Whether to add an entropy regularization term that keeps the Monte Carlo weights from collapsing "
+                "to a single sample. Turn this on if you observe the sampler becoming very peaky or want stronger "
+                "regularization."
+            )
+        },
     )
     dirichlet_prior: float = field(
         default=0.1,
@@ -1021,8 +1027,8 @@ class MontecloraConfig:
     )
 
     def __post_init__(self):
-        if self.monteclora_n <= 0:
-            raise ValueError("`monteclora_n` must be greater than 0.")
+        if self.num_samples <= 0:
+            raise ValueError("`num_samples` must be greater than 0.")
         if self.dirichlet_prior <= 0:
             raise ValueError("`dirichlet_prior` must be greater than 0.")
         if self.buffer_size <= 0:
