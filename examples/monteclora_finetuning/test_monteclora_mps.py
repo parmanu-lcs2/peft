@@ -105,7 +105,6 @@ def main() -> None:
         if not torch.isfinite(total):
             raise RuntimeError(f"Non-finite total loss at step {step}: {total.item()}")
 
-
     if not any(v != 0.0 for v in monteclora_losses):
         raise RuntimeError("MonteCLoRA KL loss was 0.0 for every step - sampler likely inactive.")
 
