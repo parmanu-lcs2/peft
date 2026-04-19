@@ -879,9 +879,9 @@ class LoraModel(BaseTuner):
         """
         Compute the MonteCLoRA variational regularization loss.
 
-        Iterates over all `MontecloraSampler` modules in the model, sums their KL-divergence and entropy
-        components, and normalizes by the number of MonteCLoRA layers. Returns ``0.0`` if MonteCLoRA is not used
-        anywhere in the model.
+        Iterates over all `MontecloraSampler` modules in the model, sums their KL-divergence and entropy components,
+        and normalizes by the number of MonteCLoRA layers. Returns ``0.0`` if MonteCLoRA is not used anywhere in the
+        model.
 
         Typical usage during training (after computing the task loss):
 
