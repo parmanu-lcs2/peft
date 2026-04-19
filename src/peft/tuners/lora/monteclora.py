@@ -47,17 +47,24 @@ class BufferedMontecloraSampler:
         """Generates a batch of samples to refill the internal buffer."""
         # Note: We generate on self.device (which might be CPU initially).
         # We will cast to the correct accelerator in the forward pass of the main module.
+        sample_dtype = self.model.dtype
         with torch.no_grad():
             z_mvn_bulk = torch.randn(
                 (self.buffer_size, self.model.num_samples, self.model.in_features, self.model.out_features),
                 device=self.device,
+                dtype=sample_dtype,
             )
 
-            z_dirichlet_bulk = torch.randn((self.buffer_size, self.model.num_samples), device=self.device)
+            z_dirichlet_bulk = torch.randn(
+                (self.buffer_size, self.model.num_samples), device=self.device, dtype=sample_dtype
+            )
 
             self.buffer = []
             for i in range(self.buffer_size):
+                # Wishart sampling is numerically unstable in low precision; sample in fp32 then cast.
                 z_wishart = self.wish_sampler._bartlett_sampling(torch.Size()).to(self.device)
+                if sample_dtype is not None:
+                    z_wishart = z_wishart.to(sample_dtype)
 
                 sample = {"z_mvn": z_mvn_bulk[i], "z_wishart": z_wishart, "z_dirichlet": z_dirichlet_bulk[i]}
                 self.buffer.append(sample)
@@ -99,6 +106,7 @@ class MontecloraSampler(nn.Module):
         kl_loss_weight: float = 1e-5,
         buffer_size: int = 10,
         device: Optional[str] = None,
+        dtype: Optional[torch.dtype] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -108,17 +116,20 @@ class MontecloraSampler(nn.Module):
         self.use_entropy = use_entropy
         # Initial device, might change if model.to() is called.
         self.device = device if device is not None else infer_device()
+        self.dtype = dtype
         self.sample_scaler = sample_scaler
         self.kl_loss_weight = kl_loss_weight
         self.dirichlet_prior = dirichlet_prior
 
-        # Variational Parameters
-        self.std_prior = nn.Parameter(torch.rand(out_features))
-        self.expert_weights_prior = nn.Parameter(torch.rand(num_samples))
+        # Variational Parameters. The dtype is matched to the parent LoRA layer dtype so that PEFT's
+        # adapter dtype handling (e.g. `autocast_adapter_dtype`) treats these parameters consistently
+        # with the rest of the LoRA adapter.
+        self.std_prior = nn.Parameter(torch.rand(out_features, dtype=dtype))
+        self.expert_weights_prior = nn.Parameter(torch.rand(num_samples, dtype=dtype))
 
         # Buffers for state tracking
-        self.register_buffer("gaussian_var_prior", torch.eye(out_features))
-        self.register_buffer("expert_weights", torch.ones(num_samples) / num_samples)
+        self.register_buffer("gaussian_var_prior", torch.eye(out_features, dtype=dtype))
+        self.register_buffer("expert_weights", torch.ones(num_samples, dtype=dtype) / num_samples)
 
         self.sampler = BufferedMontecloraSampler(self, buffer_size=buffer_size, device=self.device)
 
@@ -209,20 +220,27 @@ class MontecloraSampler(nn.Module):
         Returns:
             tuple: (variational_noise, expert_weights)
         """
-        # Use std_prior (nn.Parameter) as the source of truth for the current device.
+        # Use std_prior (nn.Parameter) as the source of truth for the current device/dtype.
         current_device = self.std_prior.device
+        current_dtype = self.std_prior.dtype
 
         sample = self.sampler.get()
 
         if sample is not None:
-            z_mvn = sample["z_mvn"].to(current_device)
-            z_wishart = sample["z_wishart"].to(current_device)
-            z_dirichlet = sample["z_dirichlet"].to(current_device)
+            z_mvn = sample["z_mvn"].to(device=current_device, dtype=current_dtype)
+            z_wishart = sample["z_wishart"].to(device=current_device, dtype=current_dtype)
+            z_dirichlet = sample["z_dirichlet"].to(device=current_device, dtype=current_dtype)
         else:
             # Fallback if sampler fails
-            z_mvn = torch.randn((self.num_samples, self.in_features, self.out_features), device=current_device)
-            z_wishart = self.sampler.wish_sampler._bartlett_sampling(torch.Size()).to(current_device)
-            z_dirichlet = torch.randn(self.num_samples, device=current_device)
+            z_mvn = torch.randn(
+                (self.num_samples, self.in_features, self.out_features),
+                device=current_device,
+                dtype=current_dtype,
+            )
+            z_wishart = self.sampler.wish_sampler._bartlett_sampling(torch.Size()).to(
+                device=current_device, dtype=current_dtype
+            )
+            z_dirichlet = torch.randn(self.num_samples, device=current_device, dtype=current_dtype)
 
         std = torch.diag(torch.exp(self.std_prior))
 

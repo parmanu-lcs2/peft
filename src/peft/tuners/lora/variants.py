@@ -984,6 +984,7 @@ class MontecloraLinearVariant(LoraVariant):
             kl_loss_weight=monteclora_config.kl_loss_weight,
             buffer_size=monteclora_config.buffer_size,
             device=lora_A.weight.device,
+            dtype=lora_A.weight.dtype,
         )
 
     @staticmethod
