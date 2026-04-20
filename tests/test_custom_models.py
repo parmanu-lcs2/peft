@@ -3725,6 +3725,28 @@ class TestPeftCustomModel(PeftCommonTester):
         assert variational_loss > 0, "Variational loss should be positive"
         assert not torch.isnan(variational_loss), "Variational loss contains NaN"
 
+    def test_monteclora_variational_loss_computation_eval_mode(self):
+        config = LoraConfig(
+            r=8,
+            lora_alpha=16,
+            target_modules=["lin0", "lin1"],
+            monteclora_config=MontecloraConfig(num_samples=4),
+        )
+        model = get_peft_model(MLP(), config)
+        model.eval()
+
+        input_data = torch.randn(2, 10)
+        with torch.no_grad():
+            _ = model(input_data)
+
+        sampler_count = sum(1 for module in model.modules() if isinstance(module, MontecloraSampler))
+        variational_loss = model._get_monteclora_loss()
+
+        assert sampler_count > 0, "No Monteclora samplers found for variational loss computation"
+        # In eval mode, `MontecloraSampler.get_variational_loss` returns (0.0, 0.0) for every sampler, so the
+        # aggregated variational loss should be exactly zero.
+        assert variational_loss == 0.0, "Variational loss should be 0 in eval mode"
+
 
 class TestMultiRankAdapter:
     """Tests related to multirank LoRA adapters"""
