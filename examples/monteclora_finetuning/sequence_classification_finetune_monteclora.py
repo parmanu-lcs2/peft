@@ -16,6 +16,7 @@ from transformers import (
 # Assuming MonteCLoRA is available in your local installed PEFT version
 from peft import LoraConfig, MontecloraConfig, TaskType, get_peft_model
 from peft.helpers import MontecloraTrainerMixin as MonteCLoRATrainerMixin
+from peft.utils import infer_device
 
 
 # ----------------------------------------------------------------------------
@@ -57,11 +58,10 @@ def train_model(
     push_to_hub: bool,
     hub_model_id: str,
 ):
-    hf_token = os.getenv("HF_TOKEN", "")
+    hf_token = os.getenv("HF_TOKEN") or None
 
     # --- Device Setup ---
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = infer_device()
     print(f"Using device: {device}")
 
     # --- Load Tokenizer ---

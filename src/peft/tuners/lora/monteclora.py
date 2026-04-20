@@ -213,7 +213,7 @@ class MontecloraSampler(nn.Module):
             entropy = (self.expert_weights**2).sum() if self.use_entropy else 0
 
             return self.kl_loss_weight * (kl1 + kl2 + kl3), entropy
-        return 0, 0
+        return 0.0, 0.0
 
     def forward(self) -> tuple[torch.Tensor, torch.Tensor]:
         """
